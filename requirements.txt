@@ -4,3 +4,4 @@ langchain[groq]
 langchain-core
 langgraph>0.2.27
 ddgs
+langchain-community
