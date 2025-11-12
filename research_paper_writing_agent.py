@@ -58,6 +58,8 @@ class PaperState(TypedDict):
     search_results: List[str]
     paper_title: str
     abstract: str
+    literature_survey: str
+    summary: str
 
 # =======================================================
 # 4️⃣ Initialize LLM (Groq-hosted Llama 3.3)
@@ -95,10 +97,32 @@ abstract_prompt = PromptTemplate(
     ),
 )
 
+literature_prompt = PromptTemplate(
+    input_variables=["query", "context"],
+    template=(
+        "You are a research assistant.\n"
+        "Based on the topic and search results below, create a literature survey using provided context.\n\n"
+        "Topic: {query}\n\n"
+        "Search Context:\n{context}\n\n"
+        "Return the literature survey :"
+    ),
+)
+
+summary_prompt = PromptTemplate(
+    input_variables=["literature", "context"],
+    template=(
+        "You are a research assistant.\n"
+        "Based on the topic and search results below, create a comparative summary in a tabular format from given literature and context.\n\n"
+        "Topic: {literature}\n\n"
+        "Search Context:\n{context}\n\n"
+        "Return the comparative summary :"
+    ),
+)
+
 title_chain = LLMChain(llm=llm, prompt=title_prompt)
 abstract_chain = LLMChain(llm=llm, prompt=abstract_prompt)
-
-
+literature_chain = LLMChain(llm=llm, prompt=literature_prompt)
+summary_chain = LLMChain(llm=llm, prompt=summary_prompt)
 # =======================================================
 # 6️⃣ Define LangGraph Node Functions
 # =======================================================
@@ -112,7 +136,7 @@ def node_duckduckgo_search(state: PaperState) -> PaperState:
         parsed = json.loads(raw_results)
         summaries = [r.get("snippet") or r.get("body") or str(r) for r in parsed][:5]
     except Exception:
-        summaries = [raw_results[:500]]  # fallback to plain text
+        summaries = [raw_results[:1000]]  # fallback to plain text
     print(f"✅ Retrieved {len(summaries)} snippets from DuckDuckGo.")
     return {"search_results": summaries}
 
@@ -132,6 +156,20 @@ def node_generate_abstract(state: PaperState) -> PaperState:
     print("\n📄 Abstract generated successfully.\n")
     return {"abstract": abstract.strip()}
 
+def node_generate_summary(state: PaperState) -> PaperState:
+    context = "\n".join(state["search_results"])
+    literature = state["literature_survey"]
+    summary = summary_chain.run(literature=literature, context=context)
+    print("\n📄 literature survey generated successfully.\n")
+    return {"summary": summary.strip()}
+
+def node_generate_literature(state: PaperState) -> PaperState:
+    context = "\n".join(state["search_results"])
+    query = state["user_query"]
+    literature = literature_chain.run(query=query, context=context)
+    print("\n📄 literature survey generated successfully.\n")
+    return {"literature_survey": literature.strip()}
+
 # =======================================================
 # 7️⃣ Build LangGraph Flow
 # =======================================================
@@ -140,11 +178,15 @@ builder = StateGraph(PaperState)
 builder.add_node("search_web", node_duckduckgo_search)
 builder.add_node("generate_title", node_generate_title)
 builder.add_node("generate_abstract", node_generate_abstract)
+builder.add_node("generate_literature", node_generate_literature)
+builder.add_node("generate_summary", node_generate_summary)
 
 builder.add_edge(START, "search_web")
 builder.add_edge("search_web", "generate_title")
 builder.add_edge("generate_title", "generate_abstract")
-builder.add_edge("generate_abstract", END)
+builder.add_edge("generate_abstract", "generate_literature")
+builder.add_edge("generate_literature", "generate_summary")
+builder.add_edge("generate_summary", END)
 
 graph = builder.compile()
 
@@ -158,19 +200,24 @@ def run_title_abstract_agent(topic: str):
         "search_results": [],
         "paper_title": "",
         "abstract": "",
+        "literature_survey": "",
+        "summary": ""
     }
     print(f"\n🚀 Starting research agent for topic: {topic}\n")
     result = graph.invoke(input_state)
     print("\n✅ --- Final Output --- ✅")
     print("\n📘 Title:\n", result["paper_title"])
     print("\n📄 Abstract:\n", result["abstract"])
+    print("\n📄 Literature Survey:\n", result["literature_survey"])
+    print("\n📄 comparative summary:\n", result["summary"])
     return result
 
 # =======================================================
 # 9️⃣ Example Run
 # =======================================================
 # Uncomment to test
-run_title_abstract_agent("AI-driven prediction of crop yields using satellite imagery")
 
+result = run_title_abstract_agent("GenAI- Usage in critical healthcare use cases")
+print(result)
 
 
